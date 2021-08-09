@@ -118,7 +118,11 @@ def smartbchrpc(*args) -> RpcResult:
     return result
 
 def refresh_metrics() -> None:
-    blockHeight = int(smartbchrpc("eth_syncing")['currentBlock'], base=16)
+    syncing = smartbchrpc("eth_syncing")
+    if syncing == False:
+        blockHeight = int(smartbchrpc("eth_blockNumber"), base=16)
+    else:
+        blockHeight = int(smartbchrpc("eth_syncing")['currentBlock'], base=16)
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug(blockHeight)
 
