@@ -183,7 +183,7 @@ def refresh_metrics() -> None:
     blockBchTransfers = 0
     blockBchLocked = 0
     for tx in lastBlock['transactions']:
-        if tx['blockNumber'] != lastBlock['blockNumber']:
+        if tx['blockNumber'] != hex(blockHeight - 1):
             continue
         if tx['from'] == BRIDGE_CONTRACT_ADDRESS:
             blockBchLocked += int(tx['value'], base=16)
