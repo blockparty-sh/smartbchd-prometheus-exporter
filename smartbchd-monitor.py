@@ -41,15 +41,23 @@ SMARTBCH_BLOCK_UNCLES = Gauge("smartbch_block_uncles", "Block uncles")
 SMARTBCH_BLOCK_SIZE_BYTES = Gauge("smartbch_block_size_bytes", "Block size in bytes")
 SMARTBCH_BLOCK_TIMESTAMP = Gauge("smartbch_block_timestamp", "Block timestamp")
 
+
+SMARTBCH_BLOCK_CONTRACTS_CREATED = Gauge("smartbch_block_contracts_created", "Contracts created in block")
+SMARTBCH_BLOCK_CONTRACT_ACTIONS = Gauge("smartbch_block_contract_actions", "Contract actions in block")
+SMARTBCH_BLOCK_TOKEN_TRANSFERS = Gauge("smartbch_block_token_transfers", "Token transfers in block")
+SMARTBCH_BLOCK_BCH_TRANSFERS = Gauge("smartbch_block_bch_transfers", "BCH transfers in block")
+SMARTBCH_BLOCK_LOCKED_BCH = Gauge("smartbch_block_locked_bch", "Locked BCH in block")
+
 SMARTBCH_GAS_PRICE = Gauge("smartbch_gas_price", "Gas price")
 SMARTBCH_PROTOCOL_VERSION = Gauge("smartbch_protocol_version", "Protocol version")
 SMARTBCH_CHAIN_ID = Gauge("smartbch_chain_id", "Chain id")
 
-SMARTBCH_CONTRACTS_CREATED = Gauge("smartbch_contracts_created", "Contracts created")
-SMARTBCH_TOKEN_TRANSFERS = Gauge("smartbch_token_transfers", "Token transfers")
-SMARTBCH_BCH_TRANSFERS = Gauge("smartbch_bch_transfers", "BCH transfers")
-SMARTBCH_LOCKED_BCH = Gauge("smartbch_locked_bch", "Locked BCH")
-SMARTBCH_BLACKHOLE_BCH = Gauge("smartbch_blackhole_bch", "BCH Fees Burnt")
+SMARTBCH_TOTAL_CONTRACTS_CREATED = Gauge("smartbch_total_contracts_created", "Contracts created in total")
+SMARTBCH_TOTAL_CONTRACT_ACTIONS = Gauge("smartbch_total_contract_actions", "Contract actions in total")
+SMARTBCH_TOTAL_TOKEN_TRANSFERS = Gauge("smartbch_total_token_transfers", "Token transfers in total")
+SMARTBCH_TOTAL_BCH_TRANSFERS = Gauge("smartbch_total_bch_transfers", "BCH transfers in total")
+SMARTBCH_TOTAL_LOCKED_BCH = Gauge("smartbch_total_locked_bch", "Locked BCH in total")
+SMARTBCH_TOTAL_BLACKHOLE_BCH = Gauge("smartbch_total_blackhole_bch", "BCH Fees Burnt in total")
 
 
 EXPORTER_ERRORS = Counter(
@@ -122,14 +130,16 @@ def smartbchrpc(*args) -> RpcResult:
 BLACKHOLE_CONTRACT_ADDRESS="0x0000000000000000000000626c61636b686f6c65"
 BRIDGE_CONTRACT_ADDRESS="0xc172f00ac38c8b2004793f94b33483aa704045bb"
 BRIDGE_START_BLOCK = 238790 # first block with real txs seeding with bch
+
 lastBlockStatsRead = BRIDGE_START_BLOCK-1
 
 totalContractsCreated = 0
 totalTokenTransfers = 0
+totalContractActions = 0
 totalBchTransfers = 0
 totalBchLocked = 0
 def refresh_metrics() -> None:
-    global lastBlockStatsRead, totalContractsCreated, totalTokenTransfers, totalBchTransfers, totalBchLocked
+    global lastBlockStatsRead, totalContractsCreated, totalTokenTransfers, totalContractActions, totalBchTransfers, totalBchLocked
     syncing = smartbchrpc("eth_syncing")
     if syncing == False:
         blockHeight = int(smartbchrpc("eth_blockNumber"), base=16)
@@ -147,20 +157,16 @@ def refresh_metrics() -> None:
                 continue
             if tx['from'] == BRIDGE_CONTRACT_ADDRESS:
                 totalBchLocked += int(tx['value'], base=16)
-                print(totalBchLocked, tx)
             if tx['to'] == BRIDGE_CONTRACT_ADDRESS:
                 totalBchLocked -= int(tx['value'], base=16)
-                print(totalBchLocked)
-            #if tx['to'] is None:
-            #    contractsCreated += 1
-
-            #if len(tx['data']) >= 4:
-            #    method = hexutil.Encode(b.Data()[:4])
-            #    if method == "0xa9059cbb":
-            #        tokenTransfers += 1
-
-            #if tx['value']['sign'] == 1:
-            #    bchTransfers += 1
+            if tx['to'] == '0x0000000000000000000000000000000000000000':
+                totalContractsCreated += 1
+            if len(tx['input']) >= 10 and tx['input'][0:10] == '0xa9059cbb':
+                totalTokenTransfers += 1
+            if int(tx['value'], base=16) > 0:
+                totalBchTransfers += 1
+            else:
+                totalContractActions += 1
         lastBlockStatsRead += 1
         lastBlock = block
 
@@ -169,6 +175,29 @@ def refresh_metrics() -> None:
     logger.debug(lastBlock)
 
     blackholeBchFees = int(smartbchrpc("eth_getBalance", BLACKHOLE_CONTRACT_ADDRESS, hex(blockHeight - 1)), base=16)
+
+
+    blockContractsCreated = 0
+    blockTokenTransfers = 0
+    blockContractActions = 0
+    blockBchTransfers = 0
+    blockBchLocked = 0
+    for tx in lastBlock['transactions']:
+        if tx['blockNumber'] != lastBlock['blockNumber']:
+            continue
+        if tx['from'] == BRIDGE_CONTRACT_ADDRESS:
+            blockBchLocked += int(tx['value'], base=16)
+        if tx['to'] == BRIDGE_CONTRACT_ADDRESS:
+            blockBchLocked -= int(tx['value'], base=16)
+        if tx['to'] == '0x0000000000000000000000000000000000000000':
+            blockContractsCreated += 1
+        if len(tx['input']) >= 10 and tx['input'][0:10] == '0xa9059cbb':
+            blockTokenTransfers += 1
+        if int(tx['value'], base=16) > 0:
+            blockBchTransfers += 1
+        else:
+            blockContractActions += 1
+
 
     SMARTBCH_BLOCK.set(blockHeight)
     SMARTBCH_BLOCK_TRANSACTIONS.set(len(lastBlock['transactions']))
@@ -186,11 +215,18 @@ def refresh_metrics() -> None:
     SMARTBCH_PROTOCOL_VERSION.set(int(smartbchrpc("eth_protocolVersion"), base=16))
     SMARTBCH_CHAIN_ID.set(int(smartbchrpc("eth_chainId"), base=16))
 
-    SMARTBCH_LOCKED_BCH.set(totalBchLocked / WEI_PER_COIN)
-    SMARTBCH_CONTRACTS_CREATED.set(totalContractsCreated)
-    SMARTBCH_TOKEN_TRANSFERS.set(totalTokenTransfers)
-    SMARTBCH_BCH_TRANSFERS.set(totalBchTransfers)
-    SMARTBCH_BLACKHOLE_BCH.set(blackholeBchFees / WEI_PER_COIN)
+    SMARTBCH_TOTAL_LOCKED_BCH.set(totalBchLocked / WEI_PER_COIN)
+    SMARTBCH_TOTAL_CONTRACTS_CREATED.set(totalContractsCreated)
+    SMARTBCH_TOTAL_CONTRACT_ACTIONS.set(totalContractActions)
+    SMARTBCH_TOTAL_TOKEN_TRANSFERS.set(totalTokenTransfers)
+    SMARTBCH_TOTAL_BCH_TRANSFERS.set(totalBchTransfers)
+    SMARTBCH_TOTAL_BLACKHOLE_BCH.set(blackholeBchFees / WEI_PER_COIN)
+
+    SMARTBCH_BLOCK_LOCKED_BCH.set(blockBchLocked / WEI_PER_COIN)
+    SMARTBCH_BLOCK_CONTRACTS_CREATED.set(blockContractsCreated)
+    SMARTBCH_BLOCK_CONTRACT_ACTIONS.set(blockContractActions)
+    SMARTBCH_BLOCK_TOKEN_TRANSFERS.set(blockTokenTransfers)
+    SMARTBCH_BLOCK_BCH_TRANSFERS.set(blockBchTransfers)
 
 def sigterm_handler(signal, frame) -> None:
     logger.critical("Received SIGTERM. Exiting.")
